@@ -28,11 +28,11 @@ import {
 } from "@tenkicloud/sandbox";
 
 export interface TenkiConfig {
-  /** Tenki API key (tk_...). Falls back to TENKI_API_KEY / TENKI_AUTH_TOKEN env vars. */
+  /** Tenki API key (tk_... or lx_...). Falls back to LUXORAI_API_KEY / LUXORAI_AUTH_TOKEN, then TENKI_API_KEY / TENKI_AUTH_TOKEN env vars. */
   apiKey?: string;
-  /** API base URL. Falls back to TENKI_API_URL, then https://api.tenki.cloud. */
+  /** API base URL. Falls back to LUXORAI_API_URL, then TENKI_API_URL, then https://api.tenki.cloud. */
   baseUrl?: string;
-  /** Workspace to create sandboxes in. Falls back to TENKI_WORKSPACE_ID; workspace API keys infer it server-side. */
+  /** Workspace to create sandboxes in. Falls back to LUXORAI_WORKSPACE_ID, then TENKI_WORKSPACE_ID; workspace API keys infer it server-side. */
   workspaceId?: string;
   /** @deprecated Tenki no longer scopes sandboxes by project. */
   projectId?: string;
@@ -55,8 +55,21 @@ export interface TenkiConfig {
  */
 const clients = new Map<string, TenkiSandbox>();
 
+/** First nonempty value among env names; LUXORAI_* names come before TENKI_*. */
+function readEnv(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value) return value;
+  }
+  return undefined;
+}
+
+const envBaseUrl = () => readEnv("LUXORAI_API_URL", "TENKI_API_URL");
+const envWorkspaceId = () => readEnv("LUXORAI_WORKSPACE_ID", "TENKI_WORKSPACE_ID");
+
 function resolveApiKey(config: TenkiConfig): string {
-  const apiKey = config.apiKey ?? process.env.TENKI_API_KEY ?? process.env.TENKI_AUTH_TOKEN;
+  const apiKey =
+    config.apiKey ?? readEnv("LUXORAI_API_KEY", "LUXORAI_AUTH_TOKEN", "TENKI_API_KEY", "TENKI_AUTH_TOKEN");
   if (!apiKey) {
     throw new Error(
       "Missing API key for Tenki.\n\n" +
@@ -69,7 +82,7 @@ function resolveApiKey(config: TenkiConfig): string {
 }
 
 function clientKey(config: TenkiConfig): string {
-  return `${resolveApiKey(config)}::${config.baseUrl ?? process.env.TENKI_API_URL ?? ""}`;
+  return `${resolveApiKey(config)}::${config.baseUrl ?? envBaseUrl() ?? ""}`;
 }
 
 function getClient(config: TenkiConfig): TenkiSandbox {
@@ -78,7 +91,7 @@ function getClient(config: TenkiConfig): TenkiSandbox {
   if (!client) {
     client = new TenkiSandbox({
       authToken: resolveApiKey(config),
-      baseUrl: config.baseUrl ?? process.env.TENKI_API_URL,
+      baseUrl: config.baseUrl ?? envBaseUrl(),
     });
     clients.set(key, client);
   }
@@ -123,7 +136,7 @@ function mapStatus(state: SessionState): InstanceInfo["status"] {
 
 function toCreateOptions(config: TenkiConfig, options?: CreateInstanceOptions): CreateOptions {
   const opts: CreateOptions = {};
-  const workspaceId = config.workspaceId ?? process.env.TENKI_WORKSPACE_ID;
+  const workspaceId = config.workspaceId ?? envWorkspaceId();
   if (workspaceId) opts.workspaceId = workspaceId;
   if (options?.name) opts.name = options.name;
   if (options?.envs) opts.env = options.envs;
@@ -360,8 +373,8 @@ export const tenki = defineProvider<Session, TenkiConfig>({
         const v = await client.createVolume({
           name: options.name,
           sizeBytes: options.sizeBytes ?? 10 * 1024 * 1024 * 1024,
-          ...(config.workspaceId ?? process.env.TENKI_WORKSPACE_ID
-            ? { workspaceId: config.workspaceId ?? process.env.TENKI_WORKSPACE_ID }
+          ...(config.workspaceId ?? envWorkspaceId()
+            ? { workspaceId: config.workspaceId ?? envWorkspaceId() }
             : {}),
         });
         // SYNC_PENDING on a fresh volume is the create-time equivalent of the

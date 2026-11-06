@@ -11,6 +11,7 @@ const enc = new TextEncoder();
 class SessionNotFoundError extends Error {}
 
 let lastCreateOptions: any = null;
+let lastClientOptions: any = null;
 let lastExec: { command: string; args?: string[]; env?: Record<string, string> } | null = null;
 let execOutputChunks: Array<{ data: Uint8Array; isStderr: boolean }> | null = null;
 
@@ -101,7 +102,9 @@ let shouldNotFind = false;
 const sharedSession = new FakeSession();
 
 class FakeTenkiSandbox {
-  constructor(public options: any) {}
+  constructor(public options: any) {
+    lastClientOptions = options;
+  }
   async createAndWait(opts: any) {
     lastCreateOptions = opts;
     return sharedSession;
@@ -358,7 +361,31 @@ describe('tenki provider (mocked SDK)', () => {
     await expect(provider.sandbox.destroy('gone')).resolves.toBeUndefined();
   });
 
+  it('reads LUXORAI_* env before TENKI_*', async () => {
+    vi.stubEnv('LUXORAI_API_KEY', 'lx_env');
+    vi.stubEnv('TENKI_API_KEY', 'tk_env');
+    vi.stubEnv('LUXORAI_API_URL', 'https://api.luxor.example');
+    vi.stubEnv('TENKI_API_URL', 'https://api.tenki.example');
+    vi.stubEnv('LUXORAI_WORKSPACE_ID', 'ws_lx');
+    vi.stubEnv('TENKI_WORKSPACE_ID', 'ws_tk');
+    await tenki({}).sandbox.create();
+    expect(lastClientOptions).toMatchObject({ authToken: 'lx_env', baseUrl: 'https://api.luxor.example' });
+    expect(lastCreateOptions).toMatchObject({ workspaceId: 'ws_lx' });
+  });
+
+  it('falls back to TENKI_* env when LUXORAI_* is unset', async () => {
+    vi.stubEnv('LUXORAI_API_KEY', '');
+    vi.stubEnv('LUXORAI_AUTH_TOKEN', '');
+    vi.stubEnv('TENKI_API_KEY', 'tk_fallback');
+    vi.stubEnv('LUXORAI_API_URL', '');
+    vi.stubEnv('TENKI_API_URL', 'https://api.tenki.fallback');
+    await tenki({}).sandbox.create();
+    expect(lastClientOptions).toMatchObject({ authToken: 'tk_fallback', baseUrl: 'https://api.tenki.fallback' });
+  });
+
   it('throws a helpful error when no API key is configured', async () => {
+    vi.stubEnv('LUXORAI_API_KEY', '');
+    vi.stubEnv('LUXORAI_AUTH_TOKEN', '');
     const saved = { key: process.env.TENKI_API_KEY, token: process.env.TENKI_AUTH_TOKEN };
     delete process.env.TENKI_API_KEY;
     delete process.env.TENKI_AUTH_TOKEN;
